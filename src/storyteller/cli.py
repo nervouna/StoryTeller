@@ -202,16 +202,24 @@ def qa(ctx, name, chapter):
 @click.option("--chapter", "-c", type=int, help="Write only this chapter")
 @click.option("--until", "-u", type=int, default=0,
               help="Maximum chapters to write; auto-extends outline if needed.")
+@click.option("--auto-outline", is_flag=True, help="Auto-generate outline without human interaction")
+@click.option("--genre", default="", help="Novel genre (for --auto-outline)")
+@click.option("--premise", default="", help="Story premise (for --auto-outline)")
 @click.option("--auto-accept", is_flag=True, help="Auto-accept critic review without prompt")
 @click.option("--skip-telescope", is_flag=True, help="Skip telescope scan")
 @click.option("--skip-outline", is_flag=True, help="Skip outline discussion")
 @click.pass_context
-def run(ctx, name, chapter, until, auto_accept, skip_telescope, skip_outline):
+def run(ctx, name, chapter, until, auto_outline, genre, premise, auto_accept, skip_telescope, skip_outline):
     """Run the full writing pipeline."""
     import sqlite3
 
     from storyteller.modules.critic import critic_review_chapter
-    from storyteller.modules.idea_king import idea_king_extend, idea_king_interactive, load_outline_from_file
+    from storyteller.modules.idea_king import (
+        idea_king_auto,
+        idea_king_extend,
+        idea_king_interactive,
+        load_outline_from_file,
+    )
     from storyteller.modules.qa import qa_format_chapter
     from storyteller.modules.secretary import secretary_sync
     from storyteller.modules.telescope import telescope_scan
@@ -240,6 +248,9 @@ def run(ctx, name, chapter, until, auto_accept, skip_telescope, skip_outline):
             console.print("\n💡 [dim]Step 2: Idea King — skipped (flag)[/dim]")
         elif has_outline and not chapter:
             console.print("\n💡 [dim]Step 2: Idea King — already done[/dim]")
+        elif auto_outline:
+            console.print("\n💡 [bold]Step 2: Idea King[/bold] — auto-generating outline...")
+            await idea_king_auto(project, settings, genre=genre, premise=premise)
         else:
             console.print("\n💡 [bold]Step 2: Idea King[/bold] — outline discussion...")
             await idea_king_interactive(project, settings)
