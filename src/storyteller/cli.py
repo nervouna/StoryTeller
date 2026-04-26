@@ -242,8 +242,7 @@ def run(ctx, name, chapter, until, auto_outline, genre, premise, auto_accept, sk
             await telescope_scan(project, settings)
 
         # Step 2: Idea King
-        outline_path = project.project_dir / "outline.md"
-        has_outline = outline_path.exists() and outline_path.read_text(encoding="utf-8").strip()
+        has_outline = load_outline_from_file(project.project_dir) is not None
         if skip_outline:
             console.print("\n💡 [dim]Step 2: Idea King — skipped (flag)[/dim]")
         elif has_outline and not chapter:
