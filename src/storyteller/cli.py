@@ -200,15 +200,17 @@ def qa(ctx, name, chapter):
 @cli.command()
 @click.argument("name")
 @click.option("--chapter", "-c", type=int, help="Write only this chapter")
+@click.option("--until", "-u", type=int, default=0,
+              help="Maximum chapters to write; auto-extends outline if needed.")
 @click.option("--skip-telescope", is_flag=True, help="Skip telescope scan")
 @click.option("--skip-outline", is_flag=True, help="Skip outline discussion")
 @click.pass_context
-def run(ctx, name, chapter, skip_telescope, skip_outline):
+def run(ctx, name, chapter, until, skip_telescope, skip_outline):
     """Run the full writing pipeline."""
     import sqlite3
 
     from storyteller.modules.critic import critic_review_chapter
-    from storyteller.modules.idea_king import idea_king_interactive, load_outline_from_file
+    from storyteller.modules.idea_king import idea_king_extend, idea_king_interactive, load_outline_from_file
     from storyteller.modules.qa import qa_format_chapter
     from storyteller.modules.secretary import secretary_sync
     from storyteller.modules.telescope import telescope_scan
@@ -262,21 +264,35 @@ def run(ctx, name, chapter, skip_telescope, skip_outline):
                 console.print("\n📋 [bold]Step 3: Secretary[/bold] — syncing world settings...")
                 await secretary_sync(project, settings)
 
-        # Step 4-6: Per-chapter loop
-        chapters_to_write = [chapter] if chapter else None
-        if not chapters_to_write and project.outline:
-            chapters_to_write = [ch.chapter_num for ch in project.outline.chapters]
+        # Step 4-6: Per-chapter loop with auto-extend
+        while True:
+            if not project.outline:
+                break
 
-        existing_chapters = {num for num, _ in list_chapters(project.project_dir)}
+            chapters_to_write = [chapter] if chapter else [
+                ch.chapter_num for ch in project.outline.chapters
+            ]
+            existing_chapters = {num for num, _ in list_chapters(project.project_dir)}
+            unwritten = [ch for ch in chapters_to_write if ch not in existing_chapters]
 
-        if chapters_to_write:
-            for ch_num in chapters_to_write:
+            if not unwritten:
+                # All current outline chapters written — try extending
+                if until > 0 and project.outline.chapters:
+                    max_ch = max(ch.chapter_num for ch in project.outline.chapters)
+                    if max_ch < until:
+                        console.print(
+                            f"\n🔄 [bold]大纲已用尽，自动扩展到第 {until} 章...[/bold]"
+                        )
+                        await idea_king_extend(project, settings, target_chapter=until)
+                        console.print("📋 [bold]重新同步世界观...[/bold]")
+                        await secretary_sync(project, settings)
+                        continue
+                break
+
+            for ch_num in unwritten:
                 # Writer
-                if ch_num in existing_chapters:
-                    console.print(f"\n✍️  [dim]Chapter {ch_num} — already written[/dim]")
-                else:
-                    console.print(f"\n✍️  [bold]Writing chapter {ch_num}...[/bold]")
-                    await writer_draft_chapter(project, settings, chapter_num=ch_num)
+                console.print(f"\n✍️  [bold]Writing chapter {ch_num}...[/bold]")
+                await writer_draft_chapter(project, settings, chapter_num=ch_num)
 
                 # Critic — always review (user might want fresh review)
                 console.print(f"\n😤 [bold]Reviewing chapter {ch_num}...[/bold]")
@@ -285,6 +301,9 @@ def run(ctx, name, chapter, skip_telescope, skip_outline):
                 # QA
                 console.print(f"\n✅ [bold]QA formatting chapter {ch_num}...[/bold]")
                 await qa_format_chapter(project, settings, chapter_num=ch_num)
+
+            if chapter:
+                break  # single-chapter mode, don't loop
 
         console.print("\n[green bold]🎉 Pipeline complete![/green bold]")
 
