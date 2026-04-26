@@ -124,3 +124,23 @@ class TestLoadOutlineFromFile:
         assert outline is not None
         assert outline.title == "name"
         assert outline.chapters == []
+
+
+class TestExtendPrompts:
+    def test_extend_system_exists(self):
+        from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM
+        assert EXTEND_SYSTEM
+
+    def test_extend_system_has_template_vars(self):
+        from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM
+        assert "{num_chapters}" in EXTEND_SYSTEM
+
+    def test_extend_user_has_template_vars(self):
+        from storyteller.llm.prompts.idea_king import EXTEND_USER
+        assert "{outline_text}" in EXTEND_USER
+        assert "{next_chapter_num}" in EXTEND_USER
+        assert "{num_chapters}" in EXTEND_USER
+
+    def test_extend_system_mentions_json(self):
+        from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM
+        assert "JSON" in EXTEND_SYSTEM
