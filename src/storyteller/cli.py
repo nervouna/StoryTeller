@@ -265,6 +265,9 @@ def run(ctx, name, chapter, until, skip_telescope, skip_outline):
                 await secretary_sync(project, settings)
 
         # Step 4-6: Per-chapter loop with auto-extend
+        extension_count = 0
+        max_extensions = 10
+
         while True:
             if not project.outline:
                 break
@@ -277,11 +280,12 @@ def run(ctx, name, chapter, until, skip_telescope, skip_outline):
 
             if not unwritten:
                 # All current outline chapters written — try extending
-                if until > 0 and project.outline.chapters:
+                if until > 0 and project.outline.chapters and extension_count < max_extensions:
                     max_ch = max(ch.chapter_num for ch in project.outline.chapters)
                     if max_ch < until:
+                        extension_count += 1
                         console.print(
-                            f"\n🔄 [bold]大纲已用尽，自动扩展到第 {until} 章...[/bold]"
+                            f"\n🔄 [bold]大纲已用尽，自动扩展 (第 {extension_count}/{max_extensions} 轮)...[/bold]"
                         )
                         await idea_king_extend(project, settings, target_chapter=until)
                         console.print("📋 [bold]重新同步世界观...[/bold]")

@@ -136,13 +136,16 @@ class TestExtendPrompts:
 
     def test_extend_system_has_template_vars(self):
         from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM
-        assert "{num_chapters}" in EXTEND_SYSTEM
+        assert "{batch_size}" in EXTEND_SYSTEM
+        assert "{next_chapter}" in EXTEND_SYSTEM
 
     def test_extend_user_has_template_vars(self):
         from storyteller.llm.prompts.idea_king import EXTEND_USER
         assert "{outline_text}" in EXTEND_USER
-        assert "{next_chapter_num}" in EXTEND_USER
-        assert "{num_chapters}" in EXTEND_USER
+        assert "{next_chapter}" in EXTEND_USER
+        assert "{batch_size}" in EXTEND_USER
+        assert "{recent_chapters}" in EXTEND_USER
+        assert "{world_summary}" in EXTEND_USER
 
     def test_extend_system_mentions_json(self):
         from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM

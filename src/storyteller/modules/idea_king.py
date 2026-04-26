@@ -11,7 +11,7 @@ from storyteller.llm.client import LLMClient, create_client_from_config
 from storyteller.llm.prompts import idea_king as idea_king_prompts
 from storyteller.log import get_logger
 from storyteller.project.models import ChapterOutline, Outline, ProjectContext
-from storyteller.utils.markdown import write_outline
+from storyteller.utils.markdown import read_chapter, write_outline
 
 log = get_logger("idea_king")
 
@@ -153,8 +153,9 @@ async def idea_king_extend(
 ) -> ProjectContext:
     """Extend outline until the last chapter reaches target_chapter number.
 
-    Generates new chapter outlines from the last existing chapter up to
-    target_chapter, saves to disk, and returns updated context.
+    Generates new chapter outlines (batch_size = min(10, remaining)),
+    reads last 2-3 chapters for continuity, queries world DB for context.
+    Saves updated outline to disk.
     """
     if not ctx.outline:
         raise ValueError("No outline to extend")
@@ -167,18 +168,45 @@ async def idea_king_extend(
                  last_chapter_num, target_chapter)
         return ctx
 
-    log.info("Extending outline: chapter %d → %d", last_chapter_num, target_chapter)
+    batch_size = min(10, num_needed)
+    next_chapter = last_chapter_num + 1
+    log.info("Extending outline: chapter %d → %d (batch=%d)",
+             last_chapter_num, target_chapter, batch_size)
 
     llm_config = settings.get_llm()
     client = create_client_from_config(llm_config)
 
+    # Build context: outline + recent chapters + world summary
     outline_text = _outline_to_markdown(ctx.outline)
 
-    system_prompt = idea_king_prompts.EXTEND_SYSTEM.format(num_chapters=num_needed)
+    recent_parts: list[str] = []
+    for ch_num in range(max(1, last_chapter_num - 2), last_chapter_num + 1):
+        content = read_chapter(ctx.project_dir, ch_num)
+        if content:
+            recent_parts.append(f"--- 第{ch_num}章 ---\n{content[-1500:]}")
+    recent_chapters = "\n\n".join(recent_parts) if recent_parts else "（暂无已写章节）"
+
+    world_summary = "（暂无世界观数据）"
+    if ctx.db_path.exists():
+        from storyteller.db.engine import create_engine, get_session_factory
+        from storyteller.modules.secretary import secretary_dump
+
+        engine = await create_engine(ctx.db_path)
+        factory = get_session_factory(engine)
+        async with factory() as session:
+            world_summary = await secretary_dump(session)
+        await engine.dispose()
+
+    system_prompt = idea_king_prompts.EXTEND_SYSTEM.format(
+        next_chapter=next_chapter,
+        batch_size=batch_size,
+    )
     user_prompt = idea_king_prompts.EXTEND_USER.format(
         outline_text=outline_text,
-        next_chapter_num=last_chapter_num + 1,
-        num_chapters=num_needed,
+        recent_chapters=recent_chapters,
+        world_summary=world_summary,
+        next_chapter=next_chapter,
+        batch_size=batch_size,
     )
 
     data = client.call_json(system=system_prompt, user=user_prompt)
