@@ -1,5 +1,8 @@
 """Tests for pipeline modules (critic, qa, idea_king, writer)."""
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from storyteller.modules.critic import _parse_review
 from storyteller.modules.idea_king import (
@@ -8,7 +11,7 @@ from storyteller.modules.idea_king import (
     load_outline_from_file,
 )
 from storyteller.modules.qa import _parse_qa_response
-from storyteller.project.models import ChapterOutline, Outline
+from storyteller.project.models import ChapterOutline, Outline, ProjectContext
 
 
 class TestParseReview:
@@ -144,3 +147,129 @@ class TestExtendPrompts:
     def test_extend_system_mentions_json(self):
         from storyteller.llm.prompts.idea_king import EXTEND_SYSTEM
         assert "JSON" in EXTEND_SYSTEM
+
+
+class TestIdeaKingExtend:
+    @pytest.mark.asyncio
+    async def test_extend_raises_when_no_outline(self, tmp_project: Path):
+        from storyteller.modules.idea_king import idea_king_extend
+
+        ctx = ProjectContext(project_dir=tmp_project, db_path=tmp_project / "test.db")
+        settings = MagicMock()
+        with pytest.raises(ValueError, match="No outline"):
+            await idea_king_extend(ctx, settings, target_chapter=5)
+
+    @pytest.mark.asyncio
+    async def test_extend_no_op_when_already_sufficient(self, tmp_project: Path):
+        from storyteller.modules.idea_king import idea_king_extend
+
+        outline = Outline(
+            title="测试",
+            chapters=[
+                ChapterOutline(chapter_num=1, title="第一章", summary="摘要1"),
+                ChapterOutline(chapter_num=2, title="第二章", summary="摘要2"),
+            ],
+        )
+        ctx = ProjectContext(project_dir=tmp_project, db_path=tmp_project / "test.db", outline=outline)
+        settings = MagicMock()
+
+        result = await idea_king_extend(ctx, settings, target_chapter=2)
+        assert len(result.outline.chapters) == 2
+        settings.get_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extend_adds_new_chapters(self, tmp_project: Path):
+        from storyteller.modules.idea_king import idea_king_extend
+
+        outline = Outline(
+            title="测试",
+            chapters=[ChapterOutline(chapter_num=1, title="第一章", summary="摘要")],
+        )
+        from storyteller.utils.markdown import write_outline
+        write_outline(tmp_project, _outline_to_markdown(outline))
+
+        ctx = ProjectContext(project_dir=tmp_project, db_path=tmp_project / "test.db", outline=outline)
+        settings = MagicMock()
+
+        mock_response = {
+            "chapters": [
+                {"chapter_num": 2, "title": "第二章", "summary": "摘要2"},
+                {"chapter_num": 3, "title": "第三章", "summary": "摘要3"},
+            ]
+        }
+
+        with patch("storyteller.modules.idea_king.create_client_from_config") as mock_factory:
+            mock_client = MagicMock()
+            mock_client.call_json.return_value = mock_response
+            mock_factory.return_value = mock_client
+
+            result = await idea_king_extend(ctx, settings, target_chapter=3)
+
+        assert len(result.outline.chapters) == 3
+        assert result.outline.chapters[1].title == "第二章"
+        assert result.outline.chapters[2].chapter_num == 3
+
+    @pytest.mark.asyncio
+    async def test_extend_filters_overlapping_chapters(self, tmp_project: Path):
+        from storyteller.modules.idea_king import idea_king_extend
+
+        outline = Outline(
+            title="测试",
+            chapters=[
+                ChapterOutline(chapter_num=1, title="第一章", summary="摘要"),
+                ChapterOutline(chapter_num=2, title="第二章", summary="摘要"),
+            ],
+        )
+        from storyteller.utils.markdown import write_outline
+        write_outline(tmp_project, _outline_to_markdown(outline))
+
+        ctx = ProjectContext(project_dir=tmp_project, db_path=tmp_project / "test.db", outline=outline)
+        settings = MagicMock()
+
+        # LLM returns chapter 2 again (overlap) + chapter 3 (new)
+        mock_response = {
+            "chapters": [
+                {"chapter_num": 2, "title": "重复章节", "summary": "不应该出现"},
+                {"chapter_num": 3, "title": "第三章", "summary": "新内容"},
+            ]
+        }
+
+        with patch("storyteller.modules.idea_king.create_client_from_config") as mock_factory:
+            mock_client = MagicMock()
+            mock_client.call_json.return_value = mock_response
+            mock_factory.return_value = mock_client
+
+            result = await idea_king_extend(ctx, settings, target_chapter=3)
+
+        assert len(result.outline.chapters) == 3
+        assert result.outline.chapters[2].title == "第三章"
+
+    @pytest.mark.asyncio
+    async def test_extend_saves_outline_to_disk(self, tmp_project: Path):
+        from storyteller.modules.idea_king import idea_king_extend
+
+        outline = Outline(
+            title="测试",
+            chapters=[ChapterOutline(chapter_num=1, title="第一章", summary="摘要")],
+        )
+        from storyteller.utils.markdown import write_outline
+        write_outline(tmp_project, _outline_to_markdown(outline))
+
+        ctx = ProjectContext(project_dir=tmp_project, db_path=tmp_project / "test.db", outline=outline)
+        settings = MagicMock()
+
+        mock_response = {
+            "chapters": [{"chapter_num": 2, "title": "续篇", "summary": "续篇摘要"}]
+        }
+
+        with patch("storyteller.modules.idea_king.create_client_from_config") as mock_factory:
+            mock_client = MagicMock()
+            mock_client.call_json.return_value = mock_response
+            mock_factory.return_value = mock_client
+
+            await idea_king_extend(ctx, settings, target_chapter=2)
+
+        reloaded = load_outline_from_file(tmp_project)
+        assert reloaded is not None
+        assert len(reloaded.chapters) == 2
+        assert reloaded.chapters[1].title == "续篇"

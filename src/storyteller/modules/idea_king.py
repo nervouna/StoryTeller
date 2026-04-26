@@ -146,6 +146,63 @@ async def idea_king_auto(
     return ctx
 
 
+async def idea_king_extend(
+    ctx: ProjectContext,
+    settings: Settings,
+    target_chapter: int,
+) -> ProjectContext:
+    """Extend outline until the last chapter reaches target_chapter number.
+
+    Generates new chapter outlines from the last existing chapter up to
+    target_chapter, saves to disk, and returns updated context.
+    """
+    if not ctx.outline:
+        raise ValueError("No outline to extend")
+
+    last_chapter_num = max(ch.chapter_num for ch in ctx.outline.chapters)
+    num_needed = target_chapter - last_chapter_num
+
+    if num_needed <= 0:
+        log.info("Outline already reaches chapter %d, target %d — no extension needed",
+                 last_chapter_num, target_chapter)
+        return ctx
+
+    log.info("Extending outline: chapter %d → %d", last_chapter_num, target_chapter)
+
+    llm_config = settings.get_llm()
+    client = create_client_from_config(llm_config)
+
+    outline_text = _outline_to_markdown(ctx.outline)
+
+    system_prompt = idea_king_prompts.EXTEND_SYSTEM.format(num_chapters=num_needed)
+    user_prompt = idea_king_prompts.EXTEND_USER.format(
+        outline_text=outline_text,
+        next_chapter_num=last_chapter_num + 1,
+        num_chapters=num_needed,
+    )
+
+    data = client.call_json(system=system_prompt, user=user_prompt)
+
+    # Reuse existing parser, then filter out overlapping chapters
+    parsed = _parse_outline_data(data)
+    seen: set[int] = set()
+    new_chapters: list[ChapterOutline] = []
+    for ch in parsed.chapters:
+        if ch.chapter_num <= last_chapter_num or ch.chapter_num in seen:
+            continue
+        seen.add(ch.chapter_num)
+        new_chapters.append(ch)
+
+    ctx.outline.chapters.extend(new_chapters)
+    ctx.outline.chapters.sort(key=lambda c: c.chapter_num)
+    log.info("Added %d new chapters (total: %d)", len(new_chapters), len(ctx.outline.chapters))
+
+    outline_md = _outline_to_markdown(ctx.outline)
+    write_outline(ctx.project_dir, outline_md)
+
+    return ctx
+
+
 # ---------- JSON Schema for structured output ----------
 
 OUTLINE_SCHEMA = {
