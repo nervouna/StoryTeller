@@ -1,0 +1,32 @@
+proxy: "socks5://127.0.0.1:7890"
+
+llm:
+  default:
+    api_key: ""                           # leave empty, reads ST_API_KEY from .env
+    base_url: ""                          # leave empty, reads ST_BASE_URL from .env
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 8192
+  # writer:                               # optional per-module override
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   base_url: "https://your-provider.com"
+  #   model: "claude-sonnet-4-20250514"
+  #   max_tokens: 8192
+  # critic:
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   base_url: "https://your-provider.com"
+  #   model: "claude-sonnet-4-20250514"
+  #   max_tokens: 8192
+
+tavily:
+  # Uses TAVILY_API_KEY env var by default
+
+projects:
+  root: "./projects"
+
+telescope:
+  book_sites:
+    - qidian
+    - fanqie
+    - qimao
+    - jinjiang
+  max_results_per_site: 10
