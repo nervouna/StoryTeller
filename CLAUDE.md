@@ -20,6 +20,7 @@ StoryTeller is an AI novel writing pipeline. 6 modules chain together: Telescope
 ## Key Patterns
 
 - LLM JSON extraction: `client.call_json(system, user)` — calls LLM then `_extract_json()` parses response (handles code blocks, finds `{...}` in text). DeepSeek does NOT support `output_config` with `json_schema`.
+- LLM tool-use: Writer/Critic use `await client.call_with_tools_async()` — async tool handler stays in the same event loop as the `AsyncSession`, avoiding `MissingGreenlet`. The sync `call_with_tools()` is still available for non-DB tool handlers.
 - DB sessions: use `session = factory()` + `try/finally: await session.close()` — the `async with factory() as session:` context manager auto-rollbacks on exit.
 - Anthropic SDK pitfall: shell `ANTHROPIC_AUTH_TOKEN` overrides `api_key` param. `LLMClient.__init__` pops it before creating the client and restores after.
 
@@ -59,7 +60,25 @@ storyteller qa <name> -c 1     # Format chapter 1
 
 ## Gotchas
 
-- `nest_asyncio.apply()` in cli.py — required because Writer/Critic tool handlers bridge sync/async via `run_until_complete`
+- `nest_asyncio.apply()` in cli.py — legacy from the old sync/async bridge; `call_with_tools_async` no longer needs it, but removing it requires verifying no other code path depends on nested loops
 - `_extract_json` in `llm/client.py` raises `ValueError` on failure; `modules/secretary.py` wraps it (catches ValueError, returns None)
 - `parse_sections()` in `utils/markdown.py` is the shared `## header` parser — used by critic and qa modules
 - Outline markdown format is coupled between `_outline_to_markdown()` and `load_outline_from_file()` in idea_king.py — changes to one must match the other
+- SQLAlchemy async pitfall: never access relationship attributes (e.g. `f.leader`, `c.items`) without eager loading (`selectinload`) — lazy loading in async context triggers `MissingGreenlet`
+
+## E2E Verification
+
+For non-trivial changes (pipeline modules, DB schema, LLM client, tool handlers), run the full verification suite before declaring done:
+
+```bash
+.venv/bin/pytest tests/ -v           # All tests pass
+.venv/bin/ruff check src/            # No lint errors
+```
+
+For changes touching the Writer/Critic tool-use path, also smoke-test with a real project:
+
+```bash
+storyteller write <name> -c 1        # Verify tool calls work end-to-end
+```
+
+This catches issues like `MissingGreenlet`, broken eager loads, or prompt regressions that unit tests don't cover.

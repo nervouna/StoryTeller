@@ -31,7 +31,7 @@ async def find_characters_by_faction(session: AsyncSession, faction_name: str) -
         select(Character)
         .join(Character.factions)
         .where(Faction.name == faction_name)
-        .options(selectinload(Character.factions))
+        .options(selectinload(Character.factions), selectinload(Character.items))
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
@@ -80,7 +80,10 @@ async def get_character_relationships(session: AsyncSession, character_name: str
 
 
 async def get_all_factions(session: AsyncSession) -> list[Faction]:
-    stmt = select(Faction).options(selectinload(Faction.members))
+    stmt = select(Faction).options(
+        selectinload(Faction.members),
+        selectinload(Faction.leader),
+    )
     result = await session.execute(stmt)
     return list(result.scalars().all())
 

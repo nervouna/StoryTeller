@@ -124,3 +124,15 @@ Writer 写作时通过 tool-use 实时查询 DB，确保设定不矛盾。
 .venv/bin/ruff check src/           # Lint
 .venv/bin/ruff check src/ --fix     # 自动修复
 ```
+
+非小型改动（流水线模块、DB schema、LLM client、tool handler）完成后，跑完整验证：
+
+```bash
+.venv/bin/pytest tests/ -v && .venv/bin/ruff check src/
+```
+
+涉及 Writer/Critic tool-use 路径的变更，还需对实际项目做 smoke-test：
+
+```bash
+storyteller write <name> -c 1
+```

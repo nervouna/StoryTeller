@@ -4,6 +4,7 @@ Adapted from TrendingHunter pattern with async support.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -48,6 +49,11 @@ def _retry_call(fn: Callable[[], _T], max_retries: int = 3) -> _T:
                 log.warning("Retry %d/%d after %ds: %s", attempt + 1, max_retries, delay, exc)
                 time.sleep(delay)
     raise last_exc  # type: ignore[misc]
+
+
+def _extract_text(content_blocks: list) -> str:
+    """Extract text from Anthropic response content blocks."""
+    return "".join(block.text for block in content_blocks if hasattr(block, "text"))
 
 
 def create_client_from_config(config) -> LLMClient:
@@ -130,9 +136,7 @@ class LLMClient:
             )
 
         response = _retry_call(_do_call)
-        text = "".join(
-            block.text for block in response.content if hasattr(block, "text")
-        )
+        text = _extract_text(response.content)
         log.info(
             "LLM response: input=%d output=%d",
             response.usage.input_tokens,
@@ -159,9 +163,7 @@ class LLMClient:
             )
 
         response = _retry_call(_do_call)
-        text = "".join(
-            block.text for block in response.content if hasattr(block, "text")
-        )
+        text = _extract_text(response.content)
         sections = _parse_sections(text)
         tokens = {
             "input": response.usage.input_tokens,
@@ -178,7 +180,7 @@ class LLMClient:
         tool_handler: Callable[[str, dict[str, Any]], str],
         max_rounds: int = 5,
     ) -> str:
-        """Agentic tool-use loop, returns final text."""
+        """Synchronous agentic tool-use loop, returns final text."""
         log.info("LLM call_with_tools: model=%s tools=%s", self._model, [t["name"] for t in tools])
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
@@ -202,32 +204,111 @@ class LLMClient:
             total_output += response.usage.output_tokens
 
             if response.stop_reason == "end_turn":
-                text = "".join(
-                    block.text for block in response.content if hasattr(block, "text")
-                )
-                log.info(
-                    "LLM done: input=%d output=%d rounds=%d",
-                    total_input, total_output, round_num + 1,
-                )
+                text = _extract_text(response.content)
+                log.info("LLM done: input=%d output=%d rounds=%d",
+                         total_input, total_output, round_num + 1)
                 return text
 
-            # Process tool calls
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    log.info("Tool call: %s(%s)", block.name, block.input)
-                    result = tool_handler(block.name, block.input)
-                    log.debug("Tool result length: %d chars", len(result))
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-
+            tool_results = self._collect_tool_results(response.content, tool_handler)
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
 
-        # Exhausted rounds, force final response
+        return self._force_final(system, messages, total_input, total_output, max_rounds)
+
+    async def call_with_tools_async(
+        self,
+        system: str,
+        user: str,
+        tools: list[dict[str, Any]],
+        tool_handler: Callable[[str, dict[str, Any]], str],
+        max_rounds: int = 5,
+    ) -> str:
+        """Async agentic tool-use loop — accepts an async tool handler.
+
+        Avoids MissingGreenlet by keeping the entire tool call chain
+        in the same async context as the AsyncSession.
+        """
+        log.info("LLM call_with_tools_async: model=%s tools=%s", self._model, [t["name"] for t in tools])
+        loop = asyncio.get_running_loop()
+
+        messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
+        total_input = 0
+        total_output = 0
+
+        for round_num in range(max_rounds):
+            log.debug("Tool round %d/%d", round_num + 1, max_rounds)
+
+            def _do_call() -> object:
+                return self._client.messages.create(
+                    model=self._model,
+                    max_tokens=self._max_tokens,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                )
+
+            response = await loop.run_in_executor(None, lambda: _retry_call(_do_call))
+            total_input += response.usage.input_tokens
+            total_output += response.usage.output_tokens
+
+            if response.stop_reason == "end_turn":
+                text = _extract_text(response.content)
+                log.info("LLM done: input=%d output=%d rounds=%d",
+                         total_input, total_output, round_num + 1)
+                return text
+
+            tool_results = await self._collect_tool_results_async(response.content, tool_handler)
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+
+        return await self._force_final_async(system, messages, total_input, total_output, max_rounds)
+
+    # -- Tool result helpers (shared between sync/async variants) --
+
+    def _collect_tool_results(
+        self,
+        blocks: list,
+        tool_handler: Callable[[str, dict[str, Any]], str],
+    ) -> list[dict[str, Any]]:
+        tool_results = []
+        for block in blocks:
+            if block.type == "tool_use":
+                log.info("Tool call: %s(%s)", block.name, block.input)
+                result = tool_handler(block.name, block.input)
+                log.debug("Tool result length: %d chars", len(result))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        return tool_results
+
+    async def _collect_tool_results_async(
+        self,
+        blocks: list,
+        tool_handler: Callable[[str, dict[str, Any]], str],
+    ) -> list[dict[str, Any]]:
+        tool_results = []
+        for block in blocks:
+            if block.type == "tool_use":
+                log.info("Tool call: %s(%s)", block.name, block.input)
+                result = await tool_handler(block.name, block.input)
+                log.debug("Tool result length: %d chars", len(result))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        return tool_results
+
+    def _force_final(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        total_input: int,
+        total_output: int,
+        max_rounds: int,
+    ) -> str:
         log.warning("Tool loop exhausted after %d rounds", max_rounds)
         messages.append({
             "role": "user",
@@ -245,9 +326,36 @@ class LLMClient:
         final_response = _retry_call(_do_final)
         total_input += final_response.usage.input_tokens
         total_output += final_response.usage.output_tokens
+        text = _extract_text(final_response.content)
+        log.info("LLM final: input=%d output=%d", total_input, total_output)
+        return text
 
-        text = "".join(
-            block.text for block in final_response.content if hasattr(block, "text")
-        )
+    async def _force_final_async(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        total_input: int,
+        total_output: int,
+        max_rounds: int,
+    ) -> str:
+        loop = asyncio.get_running_loop()
+        log.warning("Tool loop exhausted after %d rounds", max_rounds)
+        messages.append({
+            "role": "user",
+            "content": "Stop using tools. Write the final response now based on everything you've gathered.",
+        })
+
+        def _do_final() -> object:
+            return self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                messages=messages,
+            )
+
+        final_response = await loop.run_in_executor(None, lambda: _retry_call(_do_final))
+        total_input += final_response.usage.input_tokens
+        total_output += final_response.usage.output_tokens
+        text = _extract_text(final_response.content)
         log.info("LLM final: input=%d output=%d", total_input, total_output)
         return text

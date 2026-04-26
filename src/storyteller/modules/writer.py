@@ -94,21 +94,15 @@ async def _write_single_chapter(
         previous_ending=previous_ending or "（这是第一章，没有前文）",
     )
 
-    # Tool handler using session
+    # Tool handler using session (async — no run_until_complete bridge)
     async def _tool_handler(name: str, input: dict) -> str:
         return await handle_tool_call(session, name, input)
 
-    # Use tool-use loop (sync wrapper for the async handler)
-    import asyncio
-
-    def sync_tool_handler(name: str, input: dict) -> str:
-        return asyncio.get_event_loop().run_until_complete(_tool_handler(name, input))
-
-    response = client.call_with_tools(
+    response = await client.call_with_tools_async(
         system=writer_prompts.SYSTEM,
         user=user_prompt,
         tools=ALL_WORLD_TOOLS,
-        tool_handler=sync_tool_handler,
+        tool_handler=_tool_handler,
         max_rounds=5,
     )
 

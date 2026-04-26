@@ -107,16 +107,14 @@ async def _review_single_chapter(
         character_info=char_info,
     )
 
-    import asyncio
+    async def _tool_handler(name: str, input: dict) -> str:
+        return await handle_tool_call(session, name, input)
 
-    def sync_tool_handler(name: str, input: dict) -> str:
-        return asyncio.get_event_loop().run_until_complete(handle_tool_call(session, name, input))
-
-    response = client.call_with_tools(
+    response = await client.call_with_tools_async(
         system=critic_prompts.SYSTEM,
         user=user_prompt,
         tools=ALL_WORLD_TOOLS,
-        tool_handler=sync_tool_handler,
+        tool_handler=_tool_handler,
         max_rounds=3,
     )
 
