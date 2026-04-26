@@ -202,10 +202,11 @@ def qa(ctx, name, chapter):
 @click.option("--chapter", "-c", type=int, help="Write only this chapter")
 @click.option("--until", "-u", type=int, default=0,
               help="Maximum chapters to write; auto-extends outline if needed.")
+@click.option("--auto-accept", is_flag=True, help="Auto-accept critic review without prompt")
 @click.option("--skip-telescope", is_flag=True, help="Skip telescope scan")
 @click.option("--skip-outline", is_flag=True, help="Skip outline discussion")
 @click.pass_context
-def run(ctx, name, chapter, until, skip_telescope, skip_outline):
+def run(ctx, name, chapter, until, auto_accept, skip_telescope, skip_outline):
     """Run the full writing pipeline."""
     import sqlite3
 
@@ -300,7 +301,7 @@ def run(ctx, name, chapter, until, skip_telescope, skip_outline):
 
                 # Critic — always review (user might want fresh review)
                 console.print(f"\n😤 [bold]Reviewing chapter {ch_num}...[/bold]")
-                await critic_review_chapter(project, settings, chapter_num=ch_num)
+                await critic_review_chapter(project, settings, chapter_num=ch_num, auto_accept=auto_accept)
 
                 # QA
                 console.print(f"\n✅ [bold]QA formatting chapter {ch_num}...[/bold]")

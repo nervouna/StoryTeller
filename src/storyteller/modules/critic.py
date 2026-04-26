@@ -22,10 +22,12 @@ async def critic_review_chapter(
     ctx: ProjectContext,
     settings: Settings,
     chapter_num: int | None = None,
+    auto_accept: bool = False,
 ) -> ProjectContext:
     """Review and polish a chapter.
 
     Interactive: presents issues to human, gets approval before rewriting.
+    If auto_accept=True, skips the prompt and accepts the polished version.
     """
     if not ctx.outline:
         log.error("No outline available")
@@ -54,7 +56,7 @@ async def critic_review_chapter(
     for ch_num in chapters_to_review:
         log.info("Reviewing chapter %d...", ch_num)
         async with factory() as session:
-            ctx = await _review_single_chapter(ctx, settings, client, session, ch_num)
+            ctx = await _review_single_chapter(ctx, settings, client, session, ch_num, auto_accept)
 
     return ctx
 
@@ -65,8 +67,9 @@ async def _review_single_chapter(
     client: LLMClient,
     session: AsyncSession,
     ch_num: int,
+    auto_accept: bool = False,
 ) -> ProjectContext:
-    """Review a single chapter interactively."""
+    """Review a single chapter. If auto_accept, skip the interactive prompt."""
     # Get chapter content
     content = read_chapter(ctx.project_dir, ch_num)
     if not content:
@@ -129,41 +132,43 @@ async def _review_single_chapter(
     click.echo(review.get("修改建议", "（无修改建议）"))
     click.echo("=" * 50)
 
-    # Ask for approval
+    # Ask for approval (or auto-accept)
     polished = review.get("润色后版本", "")
     if not polished:
         click.echo("⚠️  未生成润色版本，保留原稿")
         return ctx
 
-    choice = click.prompt(
-        "\n请选择: [a]接受润色 [e]手动编辑 [s]跳过",
-        type=click.Choice(["a", "e", "s"]),
-        default="a",
-    )
-
-    if choice == "a":
-        # Accept polished version
+    if auto_accept:
+        click.echo("\n✅ 自动接受润色版本")
         final_content = polished
-    elif choice == "e":
-        import os
-        import tempfile
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-                f.write(polished)
-                tmp_path = f.name
-            click.echo(f"请编辑文件: {tmp_path}")
-            click.echo("编辑完成后按回车继续...")
-            input()
-            with open(tmp_path, encoding="utf-8") as f:
-                final_content = f.read()
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
     else:
-        # Skip
-        click.echo("跳过润色，保留原稿")
-        return ctx
+        choice = click.prompt(
+            "\n请选择: [a]接受润色 [e]手动编辑 [s]跳过",
+            type=click.Choice(["a", "e", "s"]),
+            default="a",
+        )
+
+        if choice == "a":
+            final_content = polished
+        elif choice == "e":
+            import os
+            import tempfile
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+                    f.write(polished)
+                    tmp_path = f.name
+                click.echo(f"请编辑文件: {tmp_path}")
+                click.echo("编辑完成后按回车继续...")
+                input()
+                with open(tmp_path, encoding="utf-8") as f:
+                    final_content = f.read()
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+        else:
+            click.echo("跳过润色，保留原稿")
+            return ctx
 
     # Update draft
     word_count = count_chinese_chars(final_content)
