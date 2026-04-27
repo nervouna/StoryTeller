@@ -19,7 +19,12 @@ from storyteller.log import get_logger
 _T = TypeVar("_T")
 log = get_logger("llm")
 
-_RETRYABLE = (anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.APITimeoutError)
+_RETRYABLE = (
+    anthropic.APIConnectionError,
+    anthropic.RateLimitError,
+    anthropic.APITimeoutError,
+    anthropic.InternalServerError,
+)
 
 
 def _parse_sections(text: str) -> dict[str, str]:
