@@ -26,6 +26,12 @@ class Outline(BaseModel):
     chapters: list[ChapterOutline] = Field(default_factory=list)
     notes: str = ""
 
+    def get_chapter(self, num: int) -> ChapterOutline | None:
+        for ch in self.chapters:
+            if ch.chapter_num == num:
+                return ch
+        return None
+
 
 class ChapterDraft(BaseModel):
     chapter_num: int
@@ -54,3 +60,9 @@ class ProjectContext:
     telescope: TelescopeReport | None = None
     current_chapter: int = 0
     errors: list[str] = field(default_factory=list)
+
+    def get_draft(self, num: int) -> ChapterDraft | None:
+        for draft in self.chapters:
+            if draft.chapter_num == num:
+                return draft
+        return None

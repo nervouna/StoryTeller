@@ -151,13 +151,17 @@ def settings(ctx, name, query, dump):
 @click.option("--chapter", "-c", type=int, help="Chapter number to write")
 @click.pass_context
 def write(ctx, name, chapter):
-    """Write chapter(s) (没头脑)."""
+    """Write chapter draft(s) (没头脑)."""
     from storyteller.modules.writer import writer_draft_chapter
     from storyteller.project.manager import load_project
+    from storyteller.utils.markdown import write_chapter as _write_chapter
 
     settings = ctx.obj["settings"]
     project = load_project(name, settings)
     _run(writer_draft_chapter(project, settings, chapter_num=chapter))
+    for draft in project.chapters:
+        if chapter is None or draft.chapter_num == chapter:
+            _write_chapter(project.project_dir, draft.chapter_num, draft.title, draft.content)
     console.print("[green]✅ Chapter(s) written[/green]")
 
 
@@ -166,29 +170,114 @@ def write(ctx, name, chapter):
 @click.option("--chapter", "-c", type=int, help="Chapter number to review")
 @click.pass_context
 def review(ctx, name, chapter):
-    """Review and polish chapter(s) (不高兴)."""
+    """Review chapter(s) and print suggestions (不高兴). Does not modify chapter files."""
     from storyteller.modules.critic import critic_review_chapter
+    from storyteller.modules.idea_king import load_outline_from_file
     from storyteller.project.manager import load_project
+    from storyteller.utils.markdown import list_chapters, read_chapter
 
     settings = ctx.obj["settings"]
     project = load_project(name, settings)
-    _run(critic_review_chapter(project, settings, chapter_num=chapter))
-    console.print("[green]✅ Chapter(s) reviewed[/green]")
+    project.outline = project.outline or load_outline_from_file(project.project_dir)
+
+    async def _review_all():
+        chapters = [chapter] if chapter else [num for num, _ in list_chapters(project.project_dir)]
+        for ch_num in chapters:
+            content = read_chapter(project.project_dir, ch_num) or ""
+            result = await critic_review_chapter(project, settings, ch_num, content)
+            if result is None:
+                console.print(f"[yellow]第{ch_num}章：跳过（无内容或大纲）[/yellow]")
+                continue
+            status = "[green]✓ 通过[/green]" if result.approved else "[red]✗ 有严重问题[/red]"
+            console.print(f"\n📋 第{ch_num}章审核 {status}")
+            console.print(f"\n[bold]审核意见：[/bold]\n{result.comments}")
+            console.print(f"\n[bold]修改建议：[/bold]\n{result.suggestions}")
+            console.print("=" * 50)
+
+    _run(_review_all())
 
 
 @cli.command()
 @click.argument("name")
-@click.option("--chapter", "-c", type=int, help="Chapter number to format")
+@click.option("--chapter", "-c", type=int, help="Chapter number to check")
 @click.pass_context
 def qa(ctx, name, chapter):
-    """Format chapter(s) to web novel standard (质检员)."""
+    """QA chapter(s) and print length/format suggestions (质检员). Does not modify files."""
     from storyteller.modules.qa import qa_format_chapter
     from storyteller.project.manager import load_project
+    from storyteller.utils.markdown import list_chapters, read_chapter
 
     settings = ctx.obj["settings"]
     project = load_project(name, settings)
-    _run(qa_format_chapter(project, settings, chapter_num=chapter))
-    console.print("[green]✅ Chapter(s) formatted[/green]")
+
+    async def _qa_all():
+        chapters = [chapter] if chapter else [num for num, _ in list_chapters(project.project_dir)]
+        for ch_num in chapters:
+            content = read_chapter(project.project_dir, ch_num) or ""
+            result = await qa_format_chapter(project, settings, ch_num, content)
+            if result is None:
+                console.print(f"[yellow]第{ch_num}章：跳过（无内容）[/yellow]")
+                continue
+            tag = "[dim]无需调整[/dim]" if not result.needs_revision else "[yellow]建议调整[/yellow]"
+            console.print(f"\n✅ 第{ch_num}章 {tag}")
+            console.print(result.suggestions)
+            console.print("=" * 50)
+
+    _run(_qa_all())
+
+
+MAX_REVISE_ROUNDS = 2
+
+
+async def _run_chapter_pipeline(project, settings, ch_num: int) -> None:
+    """Per-chapter pipeline: draft → critic loop → qa → final write."""
+    from storyteller.modules.critic import critic_review_chapter
+    from storyteller.modules.qa import qa_format_chapter
+    from storyteller.modules.writer import writer_draft_chapter
+    from storyteller.utils.markdown import write_chapter as _write_chapter
+
+    console.print(f"\n✍️  [bold]Writing chapter {ch_num} (draft)...[/bold]")
+    await writer_draft_chapter(project, settings, chapter_num=ch_num, mode="draft")
+    draft = project.get_draft(ch_num)
+    if not draft or not draft.content:
+        console.print(f"[red]第{ch_num}章：writer 未生成内容，跳过[/red]")
+        return
+    content = draft.content
+
+    for round_num in range(MAX_REVISE_ROUNDS + 1):
+        console.print(f"\n😤 [bold]Reviewing chapter {ch_num} (round {round_num + 1})...[/bold]")
+        critic_result = await critic_review_chapter(project, settings, ch_num, content)
+        if critic_result is None:
+            break
+        if critic_result.approved:
+            console.print(f"[green]✓ 第{ch_num}章通过审核[/green]")
+            break
+        if round_num == MAX_REVISE_ROUNDS:
+            console.print(f"[yellow]⚠ 第{ch_num}章 {round_num + 1} 轮后仍有严重问题，接受最新版本[/yellow]")
+            break
+        console.print(f"\n✍️  [bold]Revising chapter {ch_num} per critic...[/bold]")
+        await writer_draft_chapter(
+            project, settings, chapter_num=ch_num,
+            mode="revise", suggestions=critic_result.suggestions, original=content,
+        )
+        revised = project.get_draft(ch_num)
+        content = revised.content if revised else content
+
+    console.print(f"\n✅ [bold]QA checking chapter {ch_num}...[/bold]")
+    qa_result = await qa_format_chapter(project, settings, ch_num, content)
+    if qa_result and qa_result.needs_revision:
+        console.print(f"\n✍️  [bold]Revising chapter {ch_num} per QA...[/bold]")
+        await writer_draft_chapter(
+            project, settings, chapter_num=ch_num,
+            mode="revise", suggestions=qa_result.suggestions, original=content,
+        )
+        revised = project.get_draft(ch_num)
+        content = revised.content if revised else content
+
+    ch_outline = project.outline.get_chapter(ch_num) if project.outline else None
+    title = ch_outline.title if ch_outline else ""
+    path = _write_chapter(project.project_dir, ch_num, title, content)
+    console.print(f"[green]💾 Chapter {ch_num} saved: {path.name}[/green]")
 
 
 # ---------- Full Pipeline ----------
@@ -210,19 +299,18 @@ def run(ctx, name, chapter, until, auto_outline, genre, premise, auto_accept, sk
     """Run the full writing pipeline."""
     import sqlite3
 
-    from storyteller.modules.critic import critic_review_chapter
     from storyteller.modules.idea_king import (
         idea_king_auto,
         idea_king_extend,
         idea_king_interactive,
         load_outline_from_file,
     )
-    from storyteller.modules.qa import qa_format_chapter
     from storyteller.modules.secretary import secretary_sync
     from storyteller.modules.telescope import telescope_scan
-    from storyteller.modules.writer import writer_draft_chapter
     from storyteller.project.manager import load_project
     from storyteller.utils.markdown import list_chapters
+
+    del auto_accept  # flag kept for CLI compat; new pipeline is always auto
 
     settings = ctx.obj["settings"]
     project = load_project(name, settings)
@@ -243,7 +331,7 @@ def run(ctx, name, chapter, until, auto_outline, genre, premise, auto_accept, sk
         has_outline = _existing_outline is not None and bool(_existing_outline.chapters)
         if skip_outline:
             console.print("\n💡 [dim]Step 2: Idea King — skipped (flag)[/dim]")
-        elif has_outline and not chapter:
+        elif has_outline:
             console.print("\n💡 [dim]Step 2: Idea King — already done[/dim]")
         elif auto_outline:
             console.print("\n💡 [bold]Step 2: Idea King[/bold] — auto-generating outline...")
@@ -303,17 +391,7 @@ def run(ctx, name, chapter, until, auto_outline, genre, premise, auto_accept, sk
                 break
 
             for ch_num in unwritten:
-                # Writer
-                console.print(f"\n✍️  [bold]Writing chapter {ch_num}...[/bold]")
-                await writer_draft_chapter(project, settings, chapter_num=ch_num)
-
-                # Critic — always review (user might want fresh review)
-                console.print(f"\n😤 [bold]Reviewing chapter {ch_num}...[/bold]")
-                await critic_review_chapter(project, settings, chapter_num=ch_num, auto_accept=auto_accept)
-
-                # QA
-                console.print(f"\n✅ [bold]QA formatting chapter {ch_num}...[/bold]")
-                await qa_format_chapter(project, settings, chapter_num=ch_num)
+                await _run_chapter_pipeline(project, settings, ch_num)
 
             if chapter:
                 break  # single-chapter mode, don't loop

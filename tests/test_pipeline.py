@@ -4,37 +4,40 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from storyteller.modules.critic import _parse_review
 from storyteller.modules.idea_king import (
     _outline_to_markdown,
     _parse_outline_data,
     load_outline_from_file,
 )
-from storyteller.modules.qa import _parse_qa_response
 from storyteller.project.models import ChapterOutline, Outline, ProjectContext
+from storyteller.utils.markdown import parse_sections
 
 
 class TestParseReview:
     def test_parse_sections(self):
-        text = "## 审核意见\n问题很多\n## 修改建议\n重写吧\n## 润色后版本\n最终文本"
-        result = _parse_review(text)
-        assert result["审核意见"] == "问题很多"
-        assert result["修改建议"] == "重写吧"
-        assert result["润色后版本"] == "最终文本"
+        text = "## 审核意见\n🔴 问题一\n🟡 问题二\n\n## 修改建议\n1. 改 A\n2. 改 B"
+        result = parse_sections(text)
+        assert "🔴 问题一" in result["审核意见"]
+        assert "🟡 问题二" in result["审核意见"]
+        assert "1. 改 A" in result["修改建议"]
 
     def test_empty(self):
-        assert _parse_review("") == {}
+        assert parse_sections("") == {}
 
     def test_no_headers(self):
-        assert _parse_review("just plain text") == {}
+        assert parse_sections("just plain text") == {}
 
 
 class TestParseQaResponse:
     def test_parse_sections(self):
-        text = "## 调整说明\n拆分了\n## 正文\n调整后的内容"
-        result = _parse_qa_response(text)
-        assert result["调整说明"] == "拆分了"
-        assert result["正文"] == "调整后的内容"
+        text = "## 调整建议\n1. 精简前半段\n2. 补充细节"
+        result = parse_sections(text)
+        assert "精简前半段" in result["调整建议"]
+
+    def test_no_change(self):
+        text = "## 调整建议\n无需调整"
+        result = parse_sections(text)
+        assert result["调整建议"] == "无需调整"
 
 
 class TestParseOutlineData:
