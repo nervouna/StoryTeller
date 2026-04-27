@@ -4,14 +4,25 @@ AI 小说写作流水线。6 个模块协作，从市场调研到成稿一条龙
 
 ## 模块
 
-| 模块 | CLI 命令 | 自动/交互 | 职责 |
-|------|----------|-----------|------|
-| 🔭 望远镜 | `storyteller telescope` | 自动 | 扫描热门小说风格、梗、趋势 |
-| 💡 点子王 | `storyteller outline` | 交互 | 与你讨论并生成小说大纲 |
-| 📋 秘书长 | `storyteller settings` | 自动 | 从大纲提取世界观设定入 SQL |
-| ✍️ 没头脑 | `storyteller write` | 自动 | 根据大纲+设定写章节 |
-| 😤 不高兴 | `storyteller review` | 交互 | 审核润色，去 AI 味，纠正设定偏差 |
-| ✅ 质检员 | `storyteller qa` | 自动 | 调整章节到 2000-3000 字标准篇幅 |
+| 模块 | CLI 命令 | 职责 |
+|------|----------|------|
+| 🔭 望远镜 | `storyteller telescope` | 扫描热门小说风格、梗、趋势 |
+| 💡 点子王 | `storyteller outline` | 讨论并生成大纲（可 `--auto` 无人值守） |
+| 📋 秘书长 | `storyteller settings` | 从大纲提取世界观设定入 SQL |
+| ✍️ 没头脑 | `storyteller write` | 写章节草稿 / 按审稿意见改写 |
+| 😤 不高兴 | `storyteller review` | 审稿，给出分级修改建议（🔴严重 / 🟡中等 / 🟢轻微） |
+| ✅ 质检员 | `storyteller qa` | 检查篇幅和格式，给出调整建议 |
+
+**写审分离**：没头脑是唯一生成正文的角色，不高兴和质检员只产出建议清单，由没头脑在流水线中应用。
+
+```
+没头脑(初稿)
+  → 不高兴审 × 最多 3 轮（没 🔴 严重问题即通过，每轮之间由没头脑按建议改写）
+  → 质检员查篇幅（可选一次改写）
+  → 最终落盘
+```
+
+独立命令 `storyteller review / qa` 只打印建议供人类参考，**不会修改章节文件**。
 
 ## 快速开始
 
@@ -52,9 +63,9 @@ storyteller outline <name> --auto --genre 仙侠 --premise "废柴逆袭"  # 自
 storyteller settings <name>         # 用 LLM 从大纲提取世界观设定，写入 DB
 storyteller settings <name> --dump  # 查看所有设定
 storyteller settings <name> -q "金丹期以上的角色"  # 自然语言查询
-storyteller write <name> -c 1       # 写第 1 章
-storyteller review <name> -c 1      # 审核第 1 章
-storyteller qa <name> -c 1          # 格式化第 1 章
+storyteller write <name> -c 1       # 写第 1 章草稿
+storyteller review <name> -c 1      # 打印第 1 章的审核建议（不改文件）
+storyteller qa <name> -c 1          # 打印第 1 章的篇幅/格式建议（不改文件）
 
 # 导出
 storyteller export <name>           # 合并所有章节为单文件

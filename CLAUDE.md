@@ -24,6 +24,8 @@ StoryTeller is an AI novel writing pipeline. 6 modules chain together: Telescope
 - Anthropic SDK is sync-only; `call_with_tools_async` wraps LLM calls in `loop.run_in_executor(None, ...)` to avoid blocking the event loop while awaiting async tool handlers
 - DB sessions: use `session = factory()` + `try/finally: await session.close()` — the `async with factory() as session:` context manager auto-rollbacks on exit.
 - Anthropic SDK pitfall: shell `ANTHROPIC_AUTH_TOKEN` overrides `api_key` param. `LLMClient.__init__` pops it before creating the client and restores after.
+- Per-chapter pipeline (cli.py `_run_chapter_pipeline`): writer(draft) → critic loop (max 3 rounds; `approved` when no 🔴 in comments, up to 2 revises) → qa → optional revise → single final `write_chapter`. Writer is the sole content generator; critic returns `CriticResult`, qa returns `QaResult`. Only cli.py writes chapter files — do NOT call `write_chapter` inside modules.
+- Writer modes: `writer_draft_chapter(..., mode="draft"|"revise", suggestions, original)`. Revise mode applies a suggestion list to `original`; cli uses it to wire critic/qa feedback back through writer.
 
 ## Commands
 
@@ -66,6 +68,8 @@ storyteller qa <name> -c 1     # Format chapter 1
 - Do NOT add `nest_asyncio.apply()` back to cli.py — it's incompatible with Python 3.14+ asyncio internals and breaks sniffio detection inside httpx/httpcore async cleanup (`sniffio.AsyncLibraryNotFoundError`). The async refactor made it unnecessary
 - 502 from `ST_BASE_URL` with response header `Server: Stash HTTP Engine` (or any local-proxy banner) is the local system proxy intercepting — not a real upstream 5xx. Fix at the env layer (`NO_PROXY`), not in SDK code
 - httpx on macOS reads the system proxy via `urllib.getproxies()` but ignores `proxy_bypass()` / the ExceptionsList — bypass must be declared via `NO_PROXY` env var. Do NOT hardcode `trust_env=False` on the anthropic SDK's httpx client — it breaks legitimate external `ST_BASE_URL` use cases that need the proxy
+- `parse_sections` splits on `## ` headers, so any LLM response where one section body contains `## xxx` will be truncated at that embedded header. Keep chapter titles in content at `###` or lower (see writer prompts). This is why critic/qa prompts emit only suggestion lists, not full rewrites
+- `create_engine()` in writer/critic must be wrapped in `try/finally: await engine.dispose()` — the per-chapter pipeline invokes each module multiple times; without dispose, aiosqlite connection pools leak across chapters
 - `_parse_sections()` in `llm/client.py` returns `{"content": text}` when no headers found; `parse_sections()` in `utils/markdown.py` returns `{}` — they are NOT interchangeable
 - `_extract_json` in `llm/client.py` raises `ValueError` on failure; `modules/secretary.py` wraps it (catches ValueError, returns None)
 - `parse_sections()` in `utils/markdown.py` is the shared `## header` parser — used by critic and qa modules
