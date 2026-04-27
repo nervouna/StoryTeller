@@ -6,14 +6,11 @@ import asyncio
 from pathlib import Path
 
 import click
-import nest_asyncio
 from rich.console import Console
 from rich.table import Table
 
 from storyteller.config import load_config
 from storyteller.log import setup_logging
-
-nest_asyncio.apply()
 
 console = Console()
 

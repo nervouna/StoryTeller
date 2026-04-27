@@ -61,8 +61,8 @@ storyteller qa <name> -c 1     # Format chapter 1
 
 ## Gotchas
 
-- `nest_asyncio.apply()` in cli.py — legacy from the old sync/async bridge; `call_with_tools_async` no longer needs it, but removing it requires verifying no other code path depends on nested loops
 - `asyncio.get_event_loop()` deprecated in 3.10+; use `asyncio.get_running_loop()` inside async methods — the old form emits DeprecationWarning and may break in future Python
+- Do NOT add `nest_asyncio.apply()` back to cli.py — it's incompatible with Python 3.14+ asyncio internals and breaks sniffio detection inside httpx/httpcore async cleanup (`sniffio.AsyncLibraryNotFoundError`). The async refactor made it unnecessary
 - `_parse_sections()` in `llm/client.py` returns `{"content": text}` when no headers found; `parse_sections()` in `utils/markdown.py` returns `{}` — they are NOT interchangeable
 - `_extract_json` in `llm/client.py` raises `ValueError` on failure; `modules/secretary.py` wraps it (catches ValueError, returns None)
 - `parse_sections()` in `utils/markdown.py` is the shared `## header` parser — used by critic and qa modules
