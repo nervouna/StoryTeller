@@ -29,6 +29,7 @@ StoryTeller is an AI novel writing pipeline. 6 modules chain together: Telescope
 
 ```bash
 # Setup
+pip install -e '.[dev]'       # 安装项目和开发依赖 (pytest, ruff)
 cp .env.example .env          # ST_API_KEY, ST_BASE_URL, ST_TAVILY_API_KEY
 cp config.example.yaml config.yaml
 
@@ -42,7 +43,7 @@ storyteller review <name> -c 1 # Review chapter 1
 storyteller qa <name> -c 1     # Format chapter 1
 
 # Test
-.venv/bin/pytest tests/ -v          # 33 tests, uses pytest-asyncio for DB tests
+.venv/bin/pytest tests/ -v          # uses pytest-asyncio for DB tests
 
 # Lint
 .venv/bin/ruff check src/           # Check
